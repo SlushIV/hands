@@ -7,6 +7,8 @@ import time
 
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(min_detection_confidence=0.8, min_tracking_confidence=0.5)
+cv2.namedWindow("hands", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("hands", 800, 600)
 camera = cv2.VideoCapture(0)
 
 last_action_time = 0      
@@ -14,11 +16,40 @@ action_cooldown = 1.0
 ripples = []              
 current_action = "Waiting for gesture..."
 
+def resize_with_aspect_ratio(frame, max_w, max_h):
+    h, w = frame.shape[:2]
+
+    scale = min(max_w / w, max_h / h)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+
+    resized = cv2.resize(frame, (new_w, new_h))
+
+    # create black canvas
+    result = cv2.copyMakeBorder(
+        resized,
+        (max_h - new_h) // 2,
+        (max_h - new_h) // 2,
+        (max_w - new_w) // 2,
+        (max_w - new_w) // 2,
+        cv2.BORDER_CONSTANT,
+        value=[0, 0, 0]
+    )
+
+    return result
+
+
 while camera.isOpened():
     success, frame = camera.read()
     if not success: break
 
     frame = cv2.flip(frame, 1) # horizontal flip so frame matches mirror view
+    
+    _, _, win_w, win_h = cv2.getWindowImageRect("hands")
+
+    if win_w > 0 and win_h > 0:
+        frame = resize_with_aspect_ratio(frame, win_w, win_h)
+
     height, width, _ = frame.shape
     
     # BGR to RGB conversion for mediapipe to work
@@ -79,7 +110,7 @@ while camera.isOpened():
             current_time = time.time()
             
             # pinch fingers
-            if distance < 20 and (current_time - last_action_time) > action_cooldown and label == "Right":
+            if distance < (height / 20) and (current_time - last_action_time) > action_cooldown and label == "Right":
                 
                 if indexX > right_bound:  # hand is on the RIGHT side
                     pyautogui.press('nexttrack')
