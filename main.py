@@ -28,6 +28,19 @@ while camera.isOpened():
     # Add HUD Text
     cv2.putText(frame, f"Status: {current_action}", (width // 2 - 100, 30), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+    
+    # zone boundaries
+    left_bound = int(width * 0.3)
+    right_bound = int(width * 0.7)
+
+    # vertical zone lines
+    cv2.line(frame, (left_bound, 0), (left_bound, height), (255, 255, 255), 1)
+    cv2.line(frame, (right_bound, 0), (right_bound, height), (255, 255, 255), 1)
+
+    # zone labels
+    cv2.putText(frame, "PREV", (10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(frame, "PAUSE", (left_bound + 10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(frame, "NEXT", (right_bound + 10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
     if results.multi_hand_landmarks and results.multi_handedness:
         for fingers, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
@@ -68,13 +81,13 @@ while camera.isOpened():
             # pinch fingers
             if distance < 20 and (current_time - last_action_time) > action_cooldown and label == "Right":
                 
-                if indexX > width * 0.7:  # hand is on the RIGHT side
+                if indexX > right_bound:  # hand is on the RIGHT side
                     pyautogui.press('nexttrack')
                     current_action = "Next Track ->"
                     ripples.append([indexX, indexY, 5]) # Spawn a ripple
                     last_action_time = current_time
                     
-                elif indexX < width * 0.3: # hand is on the LEFT side
+                elif indexX < left_bound: # hand is on the LEFT side
                     pyautogui.press('prevtrack')
                     current_action = "<- Previous Track"
                     ripples.append([indexX, indexY, 5]) 
