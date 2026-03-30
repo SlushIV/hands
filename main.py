@@ -9,8 +9,6 @@ camera = cv2.VideoCapture(0)
 
 canvas = None
 
-print("Controls: '1' for Ribbon, '2' for Mandala, '3' for Distortion, 'c' to Clear, 'q' to Quit")
-
 while camera.isOpened():
     success, frame = camera.read()
     if not success: break
@@ -33,6 +31,21 @@ while camera.isOpened():
             
             # distance between index and thumb
             distance = math.hypot(indexX - thumbX, indexY - thumbY)
+
+            # draw line between fingers
+            line_color = (0, 255, 0)
+            cv2.line(frame, (indexX, indexY), (thumbX, thumbY), line_color, 3)
+
+            # draw circles at fingertips
+            cv2.circle(frame, (indexX, indexY), 10, (255, 255, 255), -1)
+            cv2.circle(frame, (indexX, indexY), 15, (255, 0, 255), 2)
+            
+            cv2.circle(frame, (thumbX, thumbY), 10, (255, 255, 255), -1)
+            cv2.circle(frame, (thumbX, thumbY), 15, (255, 0, 255), 2)
+
+            # distance text display
+            cv2.putText(frame, f"Distance: {int(distance)}", (indexX, indexY - 20), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     cv2.imshow("hands", frame)
 
