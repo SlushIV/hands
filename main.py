@@ -26,7 +26,7 @@ action_cooldown = 1.0
 ripples = []              
 current_action = "Waiting for gesture..."
 
-voulme = volume_controller.GetMasterVolumeLevelScalar()
+volume = volume_controller.GetMasterVolumeLevelScalar()
 
 def resize_with_aspect_ratio(frame, max_w, max_h):
     h, w = frame.shape[:2]
@@ -69,7 +69,7 @@ while camera.isOpened():
     results = hands.process(rgb_frame)
     
     # volume percentage display
-    cv2.putText(frame, f"{int(voulme * 100)}%", (width // 2 - 100, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+    cv2.putText(frame, f"Volume: {int(volume * 100)}%", (width // 2 - 70, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
             
     # zone boundaries
     left_bound = int(width * 0.3)
