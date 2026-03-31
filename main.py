@@ -26,6 +26,8 @@ action_cooldown = 1.0
 ripples = []              
 current_action = "Waiting for gesture..."
 
+voulme = volume_controller.GetMasterVolumeLevelScalar()
+
 def resize_with_aspect_ratio(frame, max_w, max_h):
     h, w = frame.shape[:2]
 
@@ -65,11 +67,10 @@ while camera.isOpened():
     # BGR to RGB conversion for mediapipe to work
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb_frame)
-
-    # Add HUD Text
-    cv2.putText(frame, f"Status: {current_action}", (width // 2 - 100, 30), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
     
+    # volume percentage display
+    cv2.putText(frame, f"{int(voulme * 100)}%", (width // 2 - 100, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+            
     # zone boundaries
     left_bound = int(width * 0.3)
     right_bound = int(width * 0.7)
@@ -82,10 +83,6 @@ while camera.isOpened():
     cv2.putText(frame, "PREV", (10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     cv2.putText(frame, "PAUSE", (left_bound + 10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     cv2.putText(frame, "NEXT", (right_bound + 10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-
-    # volume percentage label
-    vol_per = 50  # default volume percentage
-    cv2.putText(frame, f"{int(vol_per)}%", (45, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 150, 255), 2)
     
     if results.multi_hand_landmarks and results.multi_handedness:
         for fingers, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
@@ -114,25 +111,20 @@ while camera.isOpened():
             cv2.circle(frame, (thumbX, thumbY), 15, color, 2)
 
             # distance text display
-            cv2.putText(frame, f"Distance: {int(distance)}", (indexX, indexY - 20), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(frame, f"Distance: {int(distance)}", (indexX, indexY - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             # handedness display
-            cv2.putText(frame, f"Hand: {label}", (thumbX, thumbY + 30), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+            cv2.putText(frame, f"Hand: {label}", (thumbX, thumbY + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             current_time = time.time()
 
             # volume control with left hand
             if label == "Left":
                 # interpolate distance to volume range
-                vol_level = np.interp(distance, [height / 20, height / 2], [0, 1])
-                
-                # map distance to percentage
-                vol_per = np.interp(distance, [height / 20, height / 2], [0, 100])
+                volume = np.interp(distance, [height / 20, height / 2], [0, 1])
                 
                 # set volume
-                volume_controller.SetMasterVolumeLevelScalar(vol_level, None)
+                volume_controller.SetMasterVolumeLevelScalar(volume, None)
                 
                         
             # pinch fingers
