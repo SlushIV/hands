@@ -5,8 +5,18 @@ import math
 import pyautogui
 import time
 
+from ctypes import cast, POINTER
+from comtypes import CLSCTX_ALL
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
+# audio setup
+devices = AudioUtilities.GetSpeakers()
+interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+volume_controller = cast(interface, POINTER(IAudioEndpointVolume))
+
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(min_detection_confidence=0.8, min_tracking_confidence=0.5)
+
 cv2.namedWindow("hands", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("hands", 800, 600)
 camera = cv2.VideoCapture(0)
@@ -73,6 +83,10 @@ while camera.isOpened():
     cv2.putText(frame, "PAUSE", (left_bound + 10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     cv2.putText(frame, "NEXT", (right_bound + 10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
+    # volume percentage label
+    vol_per = 50  # default volume percentage
+    cv2.putText(frame, f"{int(vol_per)}%", (45, 430), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 150, 255), 2)
+    
     if results.multi_hand_landmarks and results.multi_handedness:
         for fingers, handedness in zip(results.multi_hand_landmarks, results.multi_handedness):
 
@@ -108,14 +122,26 @@ while camera.isOpened():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             
             current_time = time.time()
-            
+
+            # volume control with left hand
+            if label == "Left":
+                # interpolate distance to volume range
+                vol_level = np.interp(distance, [height / 20, height / 2], [0, 1])
+                
+                # map distance to percentage
+                vol_per = np.interp(distance, [height / 20, height / 2], [0, 100])
+                
+                # set volume
+                volume_controller.SetMasterVolumeLevelScalar(vol_level, None)
+                
+                        
             # pinch fingers
             if distance < (height / 20) and (current_time - last_action_time) > action_cooldown and label == "Right":
                 
                 if indexX > right_bound:  # hand is on the RIGHT side
                     pyautogui.press('nexttrack')
                     current_action = "Next Track ->"
-                    ripples.append([indexX, indexY, 5]) # Spawn a ripple
+                    ripples.append([indexX, indexY, 5]) # spawn a ripple
                     last_action_time = current_time
                     
                 elif indexX < left_bound: # hand is on the LEFT side
