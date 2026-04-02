@@ -9,6 +9,62 @@ from ctypes import cast, POINTER
 from comtypes import CLSCTX_ALL
 from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
+import pyaudio
+import threading
+from pedalboard import Pedalboard, Reverb, LowpassFilter
+
+# shared variable for audio thread
+fx_params = {"cutoff": 5000, "reverb": 0.0} 
+
+# audio thread
+def audio_processor():
+
+    # YOUR DEVICE IDs (test with virtualcabletest.py)
+    INPUT_ID = 1
+    OUTPUT_ID = 10
+    
+    CHUNK = 1024
+    RATE = 44100 # ENSURE WINDOWS AUDIO SETTINGS ARE ALSO AT 44100Hz TO AVOID ISSUES
+    audio = pyaudio.PyAudio()
+    
+    board = Pedalboard([
+        LowpassFilter(cutoff_frequency_hz=5000),
+        Reverb(room_size=0.0)
+    ])
+
+    try:
+        stream = audio.open(
+            format=pyaudio.paInt16,
+            channels=2,
+            rate=RATE,
+            input=True,
+            output=True,
+            input_device_index=INPUT_ID,
+            output_device_index=OUTPUT_ID,
+            frames_per_buffer=CHUNK
+        )
+        print(f"Audio Stream Active: Input({INPUT_ID}) -> Output({OUTPUT_ID})")
+    except Exception as e:
+        print(f"CRITICAL AUDIO ERROR: {e}")
+        print("Check if your Headphones are plugged in and Sample Rate is 44100Hz")
+        return # exit thread but keep main app running
+
+    while True:
+        try:
+            data = stream.read(CHUNK, exception_on_overflow=False)
+            audio_data = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+
+            # update the FX board with shared parameters (fx_params)
+            board[0].cutoff_frequency_hz = fx_params["cutoff"]
+            board[1].room_size = fx_params["reverb"]
+
+            effected = board(audio_data, RATE)
+            out_data = (effected * 32768.0).astype(np.int16).tobytes()
+            stream.write(out_data)
+            time.sleep(0.005) # small delay to prevent CPU overload
+        except Exception as e:
+            continue
+
 # audio setup
 devices = AudioUtilities.GetSpeakers()
 interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
@@ -19,14 +75,20 @@ hands = mp_hands.Hands(min_detection_confidence=0.8, min_tracking_confidence=0.5
 
 cv2.namedWindow("hands", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("hands", 800, 600)
+
 camera = cv2.VideoCapture(0)
+if not camera.isOpened():
+    print("Camera failed to open")
+    exit()
+
+# start audio thread
+threading.Thread(target=audio_processor, daemon=True).start()
 
 last_action_time = 0      
 action_cooldown = 1.0     
-ripples = []              
-current_action = "Waiting for gesture..."
-
+last_volume = -1             
 volume = volume_controller.GetMasterVolumeLevelScalar()
+ripples = []
 
 def resize_with_aspect_ratio(frame, max_w, max_h):
     h, w = frame.shape[:2]
@@ -53,7 +115,9 @@ def resize_with_aspect_ratio(frame, max_w, max_h):
 
 while camera.isOpened():
     success, frame = camera.read()
-    if not success: break
+    if not success: 
+        print("Failed to capture video frame")
+        break
 
     frame = cv2.flip(frame, 1) # horizontal flip so frame matches mirror view
     
@@ -120,31 +184,44 @@ while camera.isOpened():
 
             # volume control with left hand
             if label == "Left":
-                # interpolate distance to volume range
+
+                y_percent = np.clip(indexY / height, 0, 1) # 0.0 at top, 1.0 at bottom
+
+                # indexY / height gives us 0.0 (top) to 1.0 (bottom)
+                # Top = 20,000Hz (Clear), Bottom = 200Hz (Muffled)
+                cutoff_val = np.interp(indexY, [0, height], [20000, 200])
+                fx_params["cutoff"] = float(cutoff_val)
+
+                # 30 pixels (pinched) = 0.0 Reverb, 200 pixels (wide) = 0.8 Reverb
+                reverb_val = np.interp(distance, [30, 200], [0.0, 0.8])
+                fx_params["reverb"] = float(np.clip(reverb_val, 0, 1))
+
+                # interpolate distance to volume range     
                 volume = np.interp(distance, [height / 20, height / 2], [0, 1])
-                
-                # set volume
-                volume_controller.SetMasterVolumeLevelScalar(volume, None)
-                
+
+                # only update if volume changes
+                if abs(volume - last_volume) > 0.01:
+                    
+                    # set volume
+                    volume_controller.SetMasterVolumeLevelScalar(volume, None)
+                    last_volume = volume
+     
                         
             # pinch fingers
             if distance < (height / 20) and (current_time - last_action_time) > action_cooldown and label == "Right":
                 
                 if indexX > right_bound:  # hand is on the RIGHT side
                     pyautogui.press('nexttrack')
-                    current_action = "Next Track ->"
                     ripples.append([indexX, indexY, 5]) # spawn a ripple
                     last_action_time = current_time
                     
                 elif indexX < left_bound: # hand is on the LEFT side
                     pyautogui.press('prevtrack')
-                    current_action = "<- Previous Track"
                     ripples.append([indexX, indexY, 5]) 
                     last_action_time = current_time
                     
                 else: # hand is in the MIDDLE
                     pyautogui.press('playpause')
-                    current_action = "Play / Pause"
                     ripples.append([indexX, indexY, 5]) 
                     last_action_time = current_time
 
