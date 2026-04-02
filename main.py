@@ -5,31 +5,25 @@ import math
 import pyautogui
 import time
 
-from ctypes import cast, POINTER
-from comtypes import CLSCTX_ALL
-from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-
 import pyaudio
 import threading
-from pedalboard import Pedalboard, Reverb, LowpassFilter
+from pedalboard import Pedalboard, PitchShift, Bitcrush
 
 # shared variable for audio thread
-fx_params = {"cutoff": 5000, "reverb": 0.0} 
+fx_params = {"pitch": 0.0, "bit_depth": 16.0, "volume": 1.0}
 
 # audio thread
 def audio_processor():
-
-    # YOUR DEVICE IDs (test with virtualcabletest.py)
     INPUT_ID = 1
     OUTPUT_ID = 10
     
-    CHUNK = 1024
-    RATE = 44100 # ENSURE WINDOWS AUDIO SETTINGS ARE ALSO AT 44100Hz TO AVOID ISSUES
+    CHUNK = 4096
+    RATE = 44100
     audio = pyaudio.PyAudio()
     
     board = Pedalboard([
-        LowpassFilter(cutoff_frequency_hz=5000),
-        Reverb(room_size=0.0)
+        PitchShift(semitones=0),
+        Bitcrush(bit_depth=16)
     ])
 
     try:
@@ -43,32 +37,45 @@ def audio_processor():
             output_device_index=OUTPUT_ID,
             frames_per_buffer=CHUNK
         )
-        print(f"Audio Stream Active: Input({INPUT_ID}) -> Output({OUTPUT_ID})")
+        print(f"✅ Audio Stream Active: Input({INPUT_ID}) -> Output({OUTPUT_ID})")
     except Exception as e:
-        print(f"CRITICAL AUDIO ERROR: {e}")
-        print("Check if your Headphones are plugged in and Sample Rate is 44100Hz")
-        return # exit thread but keep main app running
+        print(f"❌ CRITICAL AUDIO ERROR: {e}")
+        return
+
+    current_pitch = 0.0
 
     while True:
         try:
             data = stream.read(CHUNK, exception_on_overflow=False)
-            audio_data = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            
+            # no idea what this does tbh thank you gemini
+            # 1. Convert to float and apply our Math Volume Control
+            audio_1d = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            audio_1d = audio_1d = np.clip(audio_1d * fx_params["volume"], -1.0, 1.0) # <--- DSP Volume!
 
-            # update the FX board with shared parameters (fx_params)
-            board[0].cutoff_frequency_hz = fx_params["cutoff"]
-            board[1].room_size = fx_params["reverb"]
+            # 2. Un-shuffle the deck (Interleaved -> Separate L/R Channels)
+            # Reshapes to (1024, 2) then transposes to (2, 1024)
+            audio_stereo = audio_1d.reshape(-1, 2)
 
-            effected = board(audio_data, RATE)
-            out_data = (effected * 32768.0).astype(np.int16).tobytes()
+            # Update FX
+            target_pitch = fx_params["pitch"]
+            current_pitch += (target_pitch - current_pitch) * 0.2  # smoothing
+
+            board[0].semitones = current_pitch
+
+            board[1].bit_depth = fx_params["bit_depth"]
+
+            # 3. Process the audio WITHOUT giving it amnesia (reset=False)
+            effected = board(audio_stereo, RATE)
+
+            # 4. Re-shuffle the deck and convert back to raw bytes
+            effected_1d = effected.flatten()
+            out_data = (effected_1d * 32768.0).astype(np.int16).tobytes()
+            
             stream.write(out_data)
-            time.sleep(0.005) # small delay to prevent CPU overload
         except Exception as e:
+            print(f"Audio Stream Error: {e}")
             continue
-
-# audio setup
-devices = AudioUtilities.GetSpeakers()
-interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-volume_controller = cast(interface, POINTER(IAudioEndpointVolume))
 
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(min_detection_confidence=0.8, min_tracking_confidence=0.5)
@@ -86,8 +93,7 @@ threading.Thread(target=audio_processor, daemon=True).start()
 
 last_action_time = 0      
 action_cooldown = 1.0     
-last_volume = -1             
-volume = volume_controller.GetMasterVolumeLevelScalar()
+volume = 1.0
 ripples = []
 
 def resize_with_aspect_ratio(frame, max_w, max_h):
@@ -185,27 +191,26 @@ while camera.isOpened():
             # volume control with left hand
             if label == "Left":
 
-                y_percent = np.clip(indexY / height, 0, 1) # 0.0 at top, 1.0 at bottom
-
-                # indexY / height gives us 0.0 (top) to 1.0 (bottom)
-                # Top = 20,000Hz (Clear), Bottom = 200Hz (Muffled)
-                cutoff_val = np.interp(indexY, [0, height], [20000, 200])
-                fx_params["cutoff"] = float(cutoff_val)
-
-                # 30 pixels (pinched) = 0.0 Reverb, 200 pixels (wide) = 0.8 Reverb
-                reverb_val = np.interp(distance, [30, 200], [0.0, 0.8])
-                fx_params["reverb"] = float(np.clip(reverb_val, 0, 1))
-
-                # interpolate distance to volume range     
-                volume = np.interp(distance, [height / 20, height / 2], [0, 1])
-
-                # only update if volume changes
-                if abs(volume - last_volume) > 0.01:
+                if indexX > right_bound:  # hand is on the RIGHT side
+                    # pitch shift based on distance
+                    pitch_val = np.interp(distance, [height / 20, height / 2], [-12, 12])
+                    fx_params["pitch"] = float(pitch_val)
                     
-                    # set volume
-                    volume_controller.SetMasterVolumeLevelScalar(volume, None)
-                    last_volume = volume
-     
+                elif indexX < left_bound: # hand is on the LEFT side
+                    # map distance to bit depth
+                    norm = np.clip(distance / (height / 2), 0, 1)
+                    bit_val = 4 + (norm ** 2) * 12  # exponential curve for more sensitivity at lower distances
+                    # bit_val = np.interp(distance, [height / 20, height / 2], [2, 16])
+                    fx_params["bit_depth"] = float(bit_val)
+                    
+                else: # hand is in the MIDDLE
+                    # interpolate distance for volume (0.0 to 1.0)
+                    vol_val = np.interp(distance, [height / 20, height / 2], [0.0, 1.0])
+                    fx_params["volume"] = float(vol_val)
+                
+                    # update display variable
+                    volume = vol_val
+
                         
             # pinch fingers
             if distance < (height / 20) and (current_time - last_action_time) > action_cooldown and label == "Right":
